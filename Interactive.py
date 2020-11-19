@@ -242,7 +242,7 @@ def main():
     label_map_seq: Dict[int, str] = {i: label for i, label in enumerate(labels_seq)}
     num_labels_seq = len(labels_seq)
 
-    model_name_or_path = '/home/bz/openue_pytorch/output_seq'
+    model_name_or_path = '~/openue_pytorch/output_seq'
     # 读取待训练的seq模型
     config = BertConfig.from_pretrained(
         model_name_or_path,
@@ -265,7 +265,7 @@ def main():
         # label_map_ner=label_map_ner
     )
 
-    model_name_or_path = '/home/bz/openue_pytorch/output_ner'
+    model_name_or_path = '~/openue_pytorch/output_ner'
     # 读取待训练的ner模型
     config = BertConfig.from_pretrained(
         model_name_or_path,
