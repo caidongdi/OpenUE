@@ -1,16 +1,6 @@
 import transformers as trans
 import torch
-from transformers.modeling_outputs import SequenceClassifierOutput
 from torch.nn import CrossEntropyLoss, MSELoss
-from transformers import (
-    AutoConfig,
-    AutoTokenizer,
-)
-from typing import Dict
-
-from utils_ner import get_labels_seq
-
-import torch.nn.functional as F
 
 class BertForRelationClassification(trans.BertPreTrainedModel):
     def __init__(self, config):
@@ -19,7 +9,6 @@ class BertForRelationClassification(trans.BertPreTrainedModel):
 
         self.bert = trans.BertModel(config)
 
-        # fault
         self.relation_classification = torch.nn.Linear(config.hidden_size, config.num_labels)
 
         self.init_weights()
@@ -32,18 +21,12 @@ class BertForRelationClassification(trans.BertPreTrainedModel):
         position_ids=None,
         head_mask=None,
         inputs_embeds=None,
-        labels=None,
+        label_ids_seq=None,
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
     ):
-        r"""
-        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`, defaults to :obj:`None`):
-            Labels for computing the sequence classification/regression loss.
-            Indices should be in :obj:`[0, ..., config.num_labels - 1]`.
-            If :obj:`config.num_labels == 1` a regression loss is computed (Mean-Square loss),
-            If :obj:`config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
+
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         outputs = self.bert(
@@ -58,10 +41,9 @@ class BertForRelationClassification(trans.BertPreTrainedModel):
             return_dict=return_dict,
         )
 
-
         # pooled_output = outputs[1]
 
-        # batch_size * 128 * hidden_size
+        # batch_size * ? * hidden_size
         sequence_output = outputs[0]
 
         # batch_size * hidden_size
@@ -73,13 +55,13 @@ class BertForRelationClassification(trans.BertPreTrainedModel):
         # value: (0,1), 用sigmoid的原因是一个text里面可能有多个relation，是个多分类问题
         relation_output_sigmoid = torch.sigmoid(relation_output)
 
-        if labels is None:
+        if label_ids_seq is None:
             return (relation_output_sigmoid, relation_output, cls_output)
         else:
             # 跟label算个loss
             Loss = torch.nn.BCELoss()
 
-            loss = Loss(relation_output_sigmoid, labels)
+            loss = Loss(relation_output_sigmoid, label_ids_seq)
 
             return (loss, relation_output_sigmoid, relation_output, cls_output)
 
@@ -138,9 +120,9 @@ class BertForNER(trans.BertPreTrainedModel):
         )
 
         # batch_size * 107 * hidden_size
-        sequenc_poolout_output = outputs[0]
+        sequence_poolout_output = outputs[0]
         # batch_size * 107 * 6
-        logits = self.token_classification(sequenc_poolout_output)
+        logits = self.token_classification(sequence_poolout_output)
 
         if label_ids_ner is None:
             return logits

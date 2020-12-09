@@ -1,20 +1,3 @@
-# coding=utf-8
-# Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
-# Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-""" Fine-tuning the library models for named entity recognition on CoNLL-2003. """
-
 import logging
 import os
 import sys
@@ -22,9 +5,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-# from seqeval.metrics import f1_score, precision_score, recall_score
 from torch import nn
-from utils_seq import OpenueDataset
+from utils import OpenUEDataset, openue_data_collator_seq
 from model import BertForRelationClassification
 import torch
 
@@ -33,16 +15,16 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 from transformers import (
     AutoConfig,
-    AutoModelForTokenClassification,
     AutoTokenizer,
     EvalPrediction,
     HfArgumentParser,
-    Trainer,
     TrainingArguments,
     set_seed,
+
 )
 
-from utils_seq import Split, get_labels
+from trainer_seq import Trainer
+from utils import Split, get_labels_seq
 
 
 logger = logging.getLogger(__name__)
@@ -96,10 +78,6 @@ class DataTrainingArguments:
     )
 
 def precision_score(y_true, y_pred):
-    # 其实这里计算score有点问题，算的是多分类，不是多标签分类的loss
-    # score = np.mean((torch.argmax(y_pred, 1) == torch.argmax(y_true, 1)).cpu().numpy())
-    # return score
-
     model_pred, labels = y_pred, y_true
     # 预测结果，大于这个阈值则视为预测正确
     accuracy_th = 0.5
@@ -138,10 +116,6 @@ def compute_metrics(p: EvalPrediction) -> Dict:
     }
 
 def main():
-    # See all possible arguments in src/transformers/training_args.py
-    # or by passing the --help flag to this script.
-    # We now keep distinct sets of args, for a cleaner separation of concerns.
-
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
@@ -180,21 +154,15 @@ def main():
     set_seed(training_args.seed)
 
     # Prepare task
-    labels = get_labels(data_args.labels)
-    label_map: Dict[int, str] = {i: label for i, label in enumerate(labels)}
-    num_labels = len(labels)
-
-    # Load pretrained model and tokenizer
-    #
-    # Distributed training:
-    # The .from_pretrained methods guarantee that only one local process can concurrently
-    # download model & vocab.
+    labels_seq = get_labels_seq()
+    label_map_seq = {i: label for i, label in enumerate(labels_seq)}
+    num_labels = len(labels_seq)
 
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         num_labels=num_labels,
-        id2label=label_map,
-        label2id={label: i for i, label in enumerate(labels)},
+        id2label=label_map_seq,
+        label2id={label: i for i, label in enumerate(labels_seq)},
         cache_dir=model_args.cache_dir,
     )
     tokenizer = AutoTokenizer.from_pretrained(
@@ -209,12 +177,12 @@ def main():
         cache_dir=model_args.cache_dir,
     )
 
-    # Get datasets
     train_dataset = (
-        OpenueDataset(
+        OpenUEDataset(
             data_dir=data_args.data_dir,
             tokenizer=tokenizer,
-            labels=labels,
+            labels_seq=labels_seq,
+            labels_ner=None,
             model_type=config.model_type,
             max_seq_length=data_args.max_seq_length,
             overwrite_cache=data_args.overwrite_cache,
@@ -224,10 +192,11 @@ def main():
         else None
     )
     eval_dataset = (
-        OpenueDataset(
+        OpenUEDataset(
             data_dir=data_args.data_dir,
             tokenizer=tokenizer,
-            labels=labels,
+            labels_seq=labels_seq,
+            labels_ner=None,
             model_type=config.model_type,
             max_seq_length=data_args.max_seq_length,
             overwrite_cache=data_args.overwrite_cache,
@@ -238,10 +207,11 @@ def main():
     )
 
     test_dataset = (
-        OpenueDataset(
+        OpenUEDataset(
         data_dir=data_args.data_dir,
         tokenizer=tokenizer,
-        labels=labels,
+        labels_seq=labels_seq,
+        labels_ner=None,
         model_type=config.model_type,
         max_seq_length=data_args.max_seq_length,
         overwrite_cache=data_args.overwrite_cache,
@@ -258,6 +228,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         compute_metrics=compute_metrics,
+        data_collator=openue_data_collator_seq,
     )
 
     # Training

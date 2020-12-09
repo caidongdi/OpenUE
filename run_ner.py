@@ -13,21 +13,16 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 from transformers import (
-    AutoConfig,
-    # AutoModelForTokenClassification,
-    AutoTokenizer,
-    EvalPrediction,
     HfArgumentParser,
-    # Trainer,
     TrainingArguments,
     set_seed, BertConfig, BertTokenizer,
 )
 
 from trainer_ner import Trainer
 
-from model import BertForNER, BertForRelationClassification
+from model import BertForNER
 
-from utils_ner import NerDataset, Split, get_labels_ner, get_labels_seq, openue_data_collator
+from utils import OpenUEDataset, Split, get_labels_ner, get_labels_seq, openue_data_collator_ner
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +49,6 @@ class ModelArguments:
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
 
-
 @dataclass
 class DataTrainingArguments:
     """
@@ -67,6 +61,9 @@ class DataTrainingArguments:
     labels: Optional[str] = field(
         default=None,
         metadata={"help": "Path to a file containing all labels. If not specified, CoNLL-2003 labels are used."},
+    )
+    task: Optional[str] = field(
+        default='seq'
     )
     max_seq_length: int = field(
         default=128,
@@ -105,13 +102,6 @@ def align_predictions(label_map_ner, batch_predictions, batch_label_ids) -> Tupl
     return predict, label
 
 def compute_metrics(predictions, label_ids, label_map_ner) -> Dict:
-    # # preds / label_ids  num_batch * batch_size
-    # max_ = 0
-    # for index, batch in enumerate(label_ids):
-    #     first_sample = batch[0]
-    #     first_sample_size = len(first_sample)
-    #     max_ = max(first_sample_size, max_)
-
     preds_list, out_label_list = align_predictions(label_map_ner, predictions, label_ids)
     return {
         "precision": precision_score(out_label_list, preds_list),
@@ -122,8 +112,6 @@ def compute_metrics(predictions, label_ids, label_map_ner) -> Dict:
 def main():
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
-        # If we pass only one argument to the script and it's the path to a json file,
-        # let's parse it to get our arguments.
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
@@ -165,8 +153,6 @@ def main():
 
     # 读取seq的label
     labels_seq = get_labels_seq()
-    label_map_seq: Dict[int, str] = {i: label for i, label in enumerate(labels_seq)}
-    num_labels_seq = len(labels_seq)
 
     # 读取待训练的NER模型
     config = BertConfig.from_pretrained(
@@ -192,7 +178,7 @@ def main():
 
     # Get datasets
     train_dataset = (
-        NerDataset(
+        OpenUEDataset(
             data_dir=data_args.data_dir,
             tokenizer=tokenizer,
             labels_seq=labels_seq,
@@ -201,12 +187,13 @@ def main():
             max_seq_length=data_args.max_seq_length,
             overwrite_cache=data_args.overwrite_cache,
             mode=Split.train,
+            task=data_args.task
         )
         if training_args.do_train
         else None
     )
     eval_dataset = (
-        NerDataset(
+        OpenUEDataset(
             data_dir=data_args.data_dir,
             tokenizer=tokenizer,
             labels_seq=labels_seq,
@@ -215,12 +202,13 @@ def main():
             max_seq_length=data_args.max_seq_length,
             overwrite_cache=data_args.overwrite_cache,
             mode=Split.dev,
+            task=data_args.task
         )
         if training_args.do_eval
         else None
     )
     test_dataset = (
-        NerDataset(
+        OpenUEDataset(
             data_dir=data_args.data_dir,
             tokenizer=tokenizer,
             labels_seq=labels_seq,
@@ -229,76 +217,47 @@ def main():
             max_seq_length=data_args.max_seq_length,
             overwrite_cache=data_args.overwrite_cache,
             mode=Split.test,
+            task=data_args.task
         )
         if training_args.do_predict
         else None
     )
 
-    # Initialize our Trainer
-    trainer = Trainer(
-        model=model_ner,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=openue_data_collator,
-        compute_metrics=compute_metrics,
-        label_map_ner=label_map_ner
-    )
-
-    # Training
-    if training_args.do_train:
-        trainer.train(
-            model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None
-        )
-        trainer.save_model()
-        # For convenience, we also re-save the tokenizer to the same directory,
-        # so that you can share your model easily on huggingface.co/models =)
-        if trainer.is_world_master():
-            tokenizer.save_pretrained(training_args.output_dir)
-
-    # Predict
-    results = {}
-    if training_args.do_predict:
-        test_dataset = NerDataset(
-            data_dir=data_args.data_dir,
-            tokenizer=tokenizer,
-            labels_seq=labels_seq,
-            labels_ner=labels_ner,
-            model_type=config.model_type,
-            max_seq_length=data_args.max_seq_length,
-            overwrite_cache=data_args.overwrite_cache,
-            mode=Split.test,
-        )
-
-        predictions, label_ids, metrics = trainer.predict(test_dataset)
-        print(metrics)
-        # preds_list, _ = align_predictions(label_map_ner, predictions, label_ids)
-        #
-        # output_test_results_file = os.path.join(training_args.output_dir, "test_results.txt")
-        # if trainer.is_world_master():
-        #     with open(output_test_results_file, "w") as writer:
-        #         for key, value in metrics.items():
-        #             logger.info("  %s = %s", key, value)
-        #             writer.write("%s = %s\n" % (key, value))
-        #
-        # # Save predictions
-        # output_test_predictions_file = os.path.join(training_args.output_dir, "test_predictions.txt")
-        # if trainer.is_world_master():
-        #     with open(output_test_predictions_file, "w") as writer:
-        #         with open(os.path.join(data_args.data_dir, "test.txt"), "r") as f:
-        #             example_id = 0
-        #             for line in f:
-        #                 if line.startswith("-DOCSTART-") or line == "" or line == "\n":
-        #                     writer.write(line)
-        #                     if not preds_list[example_id]:
-        #                         example_id += 1
-        #                 elif preds_list[example_id]:
-        #                     output_line = line.split()[0] + " " + preds_list[example_id].pop(0) + "\n"
-        #                     writer.write(output_line)
-        #                 else:
-        #                     logger.warning(
-        #                         "Maximum sequence length exceeded: No prediction for '%s'.", line.split()[0]
-        #                     )
+    # # Initialize our Trainer
+    # trainer = Trainer(
+    #     model=model_ner,
+    #     args=training_args,
+    #     train_dataset=train_dataset,
+    #     eval_dataset=eval_dataset,
+    #     data_collator=openue_data_collator_ner,
+    #     compute_metrics=compute_metrics,
+    #     label_map_ner=label_map_ner
+    # )
+    #
+    # # Training
+    # if training_args.do_train:
+    #     trainer.train(
+    #         model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None
+    #     )
+    #     trainer.save_model()
+    #     if trainer.is_world_master():
+    #         tokenizer.save_pretrained(training_args.output_dir)
+    #
+    # # Predict
+    # if training_args.do_predict:
+    #     test_dataset = OpenUEDataset(
+    #         data_dir=data_args.data_dir,
+    #         tokenizer=tokenizer,
+    #         labels_seq=labels_seq,
+    #         labels_ner=labels_ner,
+    #         model_type=config.model_type,
+    #         max_seq_length=data_args.max_seq_length,
+    #         overwrite_cache=data_args.overwrite_cache,
+    #         mode=Split.test,
+    #     )
+    #
+    #     predictions, label_ids, metrics = trainer.predict(test_dataset)
+    #     print(metrics)
 
 def _mp_fn(index):
     # For xla_spawn (TPUs)
