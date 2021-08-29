@@ -25,6 +25,8 @@ python run_ner.py --model_name_or_path $pretrained_model_path/bert-base-chinese 
 ```
 python Interactive.py --seq_model_path ./output_seq/ --ner_model_path ./output_ner/ --output_dir ./output/ --data_dir ./dataset -per_device_eval_batch_size 1 --do_predict --task interactive
 ```
+
+
 ## 引用
 
 如果您使用或扩展我们的工作，请引用以下文章：
