@@ -1,0 +1,16 @@
+import openue
+import pytorch_lightning as pl
+from openue import _setup_parser
+# 加载args,用以训练ner模型
+path = "./config/run_ner.yaml"
+parser = _setup_parser()
+args = parser.parse_args()
+args.__dict__.update(yaml.load(open(path)))
+
+data = openue.data.REDataset(args)
+lit_model = openue.lit_models.RELitModel(args)
+
+trainer = pl.Trainer.from_argparse_args(args)
+
+trainer.fit(lit_model, datamodule=data)
+trainer.test()
